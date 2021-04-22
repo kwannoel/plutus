@@ -283,6 +283,7 @@
           "Crypto"
           "Data/Text/Prettyprint/Doc/Custom"
           "Data/SatInt"
+          "Data/BRAL"
           ];
         hsSourceDirs = [
           "plutus-core/src"
@@ -414,6 +415,18 @@
           hsSourceDirs = [ "untyped-plutus-core/test" ];
           mainPath = [ "Spec.hs" ];
           };
+        "bral-test" = {
+          depends = [
+            (hsPkgs."base" or (errorHandler.buildDepError "base"))
+            (hsPkgs."plutus-core" or (errorHandler.buildDepError "plutus-core"))
+            (hsPkgs."tasty" or (errorHandler.buildDepError "tasty"))
+            (hsPkgs."tasty-hunit" or (errorHandler.buildDepError "tasty-hunit"))
+            (hsPkgs."tasty-quickcheck" or (errorHandler.buildDepError "tasty-quickcheck"))
+            ];
+          buildable = true;
+          hsSourceDirs = [ "untyped-plutus-core/test" ];
+          mainPath = [ "TestBRAL.hs" ];
+          };
         };
       benchmarks = {
         "cost-model-budgeting-bench" = {
@@ -486,6 +499,18 @@
           buildable = true;
           modules = [ "CostModelCreation" ];
           hsSourceDirs = [ "cost-model/test" "cost-model/create-cost-model" ];
+          };
+        "bral-bench" = {
+          depends = [
+            (hsPkgs."base" or (errorHandler.buildDepError "base"))
+            (hsPkgs."plutus-core" or (errorHandler.buildDepError "plutus-core"))
+            (hsPkgs."criterion" or (errorHandler.buildDepError "criterion"))
+            (hsPkgs."random" or (errorHandler.buildDepError "random"))
+            (hsPkgs."containers" or (errorHandler.buildDepError "containers"))
+            (hsPkgs."ral" or (errorHandler.buildDepError "ral"))
+            ];
+          buildable = true;
+          hsSourceDirs = [ "untyped-plutus-core/bench" ];
           };
         };
       };
