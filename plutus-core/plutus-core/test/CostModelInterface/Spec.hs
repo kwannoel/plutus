@@ -154,5 +154,3 @@ test_costModelInterface =
              , testCase "defaultCekCostModel <- randomCekCostModel"  $ testExtractAfterUpdate defaultCekCostModel randomCekCostModel
              ]
      ]
-
-
