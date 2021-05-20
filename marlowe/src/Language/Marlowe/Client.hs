@@ -3,7 +3,6 @@
 {-# LANGUAGE DefaultSignatures     #-}
 {-# LANGUAGE DeriveAnyClass        #-}
 {-# LANGUAGE DeriveGeneric         #-}
-{-# LANGUAGE DerivingStrategies    #-}
 {-# LANGUAGE DerivingVia           #-}
 {-# LANGUAGE FlexibleContexts      #-}
 {-# LANGUAGE FlexibleInstances     #-}
@@ -48,6 +47,7 @@ import           Ledger.Constraints
 import qualified Ledger.Constraints           as Constraints
 import qualified Ledger.Interval              as Interval
 import           Ledger.Scripts               (Validator, datumHash, unitRedeemer)
+import qualified Ledger.TimeSlot              as TimeSlot
 import qualified Ledger.Typed.Scripts         as Scripts
 import           Ledger.Typed.Tx              (TypedScriptTxOut (..), tyTxOutData)
 import qualified Ledger.Value                 as Val
@@ -56,7 +56,7 @@ import           Plutus.Contract.StateMachine (AsSMContractError (..), StateMach
                                                StateMachineInstance (..), Void, WaitingResult (..), getStates)
 import qualified Plutus.Contract.StateMachine as SM
 import qualified Plutus.Contracts.Currency    as Currency
-import qualified PlutusTx                     as PlutusTx
+import qualified PlutusTx
 import qualified PlutusTx.AssocMap            as AssocMap
 import qualified PlutusTx.Prelude             as P
 
@@ -281,7 +281,7 @@ marlowePlutusContract = do
         maybeState <- SM.getOnChainState theClient
         case maybeState of
             Nothing -> do
-                wr <- SM.waitForUpdateUntil theClient untilSlot
+                wr <- SM.waitForUpdateUntil theClient (TimeSlot.slotToPOSIXTime untilSlot)
                 case wr of
                     ContractEnded -> do
                         logInfo @String $ "Contract Ended for party " <> show party
@@ -324,7 +324,7 @@ marlowePlutusContract = do
                 continueWith marloweData
             WaitOtherActionUntil timeout -> do
                 logInfo @String $ "WaitOtherActionUntil " <> show timeout
-                wr <- SM.waitForUpdateUntil theClient timeout
+                wr <- SM.waitForUpdateUntil theClient (TimeSlot.slotToPOSIXTime timeout)
                 case wr of
                     ContractEnded -> do
                         logInfo @String $ "Contract Ended"
@@ -533,7 +533,7 @@ mkMarloweStateMachineTransition params SM.State{ SM.stateData=MarloweData{..}, S
                         finalBalance = totalIncome P.- totalPayouts
                         in (outputsConstraints, finalBalance)
             let range = Interval.interval minSlot maxSlot
-            let constraints = inputsConstraints <> outputsConstraints <> mustValidateIn range
+            let constraints = inputsConstraints <> outputsConstraints <> mustValidateIn (TimeSlot.slotRangeToPOSIXTimeRange range)
             if preconditionsOk
             then Just (constraints, SM.State marloweData finalBalance)
             else Nothing
