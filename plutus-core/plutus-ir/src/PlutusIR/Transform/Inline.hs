@@ -15,6 +15,7 @@ module PlutusIR.Transform.Inline (inline) where
 
 import           PlutusIR
 import qualified PlutusIR.Analysis.Dependencies as Deps
+import qualified PlutusIR.Analysis.Usages       as Usages
 import           PlutusIR.Mark
 import           PlutusIR.MkPir
 import           PlutusIR.Purity
@@ -112,6 +113,8 @@ type Inlining tyname name uni fun a m =
 data InlineInfo = InlineInfo { _strictnessMap :: Deps.StrictnessMap
                              , _usages        :: Usages.Usages
                              }
+makeLenses ''InlineInfo
+
 lookupTerm
     :: (HasUnique name TermUnique)
     => name
@@ -157,18 +160,18 @@ inline
     :: ExternalConstraints tyname name uni fun
     => Term tyname name uni fun a
     -> Term tyname name uni fun a
-inline t = flip runReader inlineInfo $ flip evalStateT mempty $ do
+inline t = flip runReader inlineInfo $ flip evalStateT mempty $ runQuoteT $ do
     -- Ensure that we can safely rename inside that term
     markNonFreshTerm t
     processTerm t
   where
         inlineInfo :: InlineInfo
-        inlineInfo = InlineInfo (snd deps) usages
+        inlineInfo = InlineInfo (snd deps) usgs
         -- We actually just want the variable strictness information here!
         deps :: (G.Graph Deps.Node, Map.Map PLC.Unique Strictness)
         deps = Deps.runTermDeps t
-        usages :: Map.Map Unique Int
-        usages = Usages.runTermUsages t
+        usgs :: Map.Map Unique Int
+        usgs = Usages.runTermUsages t
 
 {- Note [Removing inlined bindings]
 We *do* remove bindings that we inline (since we only do unconditional inlining). We *could*
@@ -256,29 +259,41 @@ processSingleBinding = \case
     b -> Just <$> forMOf bindingSubterms b processTerm
 
 maybeAddSubst
-    :: Inlining tyname name uni fun a m
+    :: forall tyname name uni fun a m . Inlining tyname name uni fun a m
     => Strictness
     -> name
     -> Term tyname name uni fun a
     -> m (Maybe (Term tyname name uni fun a))
 maybeAddSubst s n rhs = do
-    -- PreInlineUnconditional
-    -- we do a slightly different
-    let preUnconditional = undefined
+    -- NOTE:  Nothing means that we are inlining the term:
+    --   * we have extended the substitution, and
+    --   * we are removing the binding (hence we return Nothing)
+    preUnconditional <- preInlineUnconditional n rhs
+    if preUnconditional then do
+        -- Pre Inline preInlineUnconditional
+        -- TODO:  This is probably not Done
+        extendAndDrop (Done rhs)
+    else do
+        -- Only do PostInlineUnconditional
+        -- See Note [Inlining approach and 'Secrets of the GHC Inliner']
+        rhs' <- processTerm rhs
+        postUnconditional <- postInlineUnconditional s rhs'
+        if postUnconditional then do
+            extendAndDrop (Done rhs')
+        -- NOTE:  keep the processed binding
+        else pure $ Just rhs'
+    where
+        extendAndDrop :: forall b. InlineTerm tyname name uni fun a -> m (Maybe b)
+        extendAndDrop t = modify (extendTerm n t) >> pure Nothing
 
-    -- Only do PostInlineUnconditional
-    -- See Note [Inlining approach and 'Secrets of the GHC Inliner']
-    rhs' <- processTerm rhs
-    doInline <- postInlineUnconditional s rhs'
-    usages <- _usages <$> ask
-    let usedOnce = Usages.isUsedOnce n usages
-    if doInline || usedOnce then do
-        modify (\subst -> extendTerm n (Done rhs') subst)
-        pure Nothing
-    else pure $ Just rhs'
-
--- TODO: Finish this!
-preInlineUnconditional = undefined
+preInlineUnconditional :: Inlining tyname name uni fun a m => name -> Term tyname name uni fun a -> m Bool
+preInlineUnconditional n t = do
+    usgs <- asks _usages
+    let usedOnce = Usages.isUsedOnce n usgs
+    let termIsLambda = case t of
+            LamAbs{} -> True
+            _        -> False
+    pure $ usedOnce && termIsLambda
 
 {- Note [Inlining criteria]
 What gets inlined? We don't really care about performance here, so we're really just
@@ -304,22 +319,13 @@ unconditionally.
 -- See Note [Inlining approach and 'Secrets of the GHC Inliner']
 postInlineUnconditional :: Inlining tyname name uni fun a m => Strictness -> Term tyname name uni fun a -> m Bool
 postInlineUnconditional s t = do
-    strictnessMap <- _strictnessMap <$> ask
+    strctMap <- _strictnessMap <$> ask
     let -- See Note [Inlining criteria]
         termIsTrivial = trivialTerm t
         -- See Note [Inlining and purity]
-        strictnessFun = \n' -> Map.findWithDefault NonStrict (n' ^. theUnique) strictnessMap
+        strictnessFun = \n' -> Map.findWithDefault NonStrict (n' ^. theUnique) strctMap
         termIsPure = case s of { Strict -> isPure strictnessFun t; NonStrict -> True; }
     pure $ termIsTrivial && termIsPure
-
-pureTerm :: Inlining tyname name uni fun a m => Strictness -> Term tyname name uni fun a -> m Bool
-pureTerm s t = do
-  strictnessMap <- _strictnessMap <$> ask
-  let
-    -- See Note [Inlining and purity]
-    strictnessFun = \n' -> Map.findWithDefault NonStrict (n' ^. theUnique) strictnessMap
-    termIsPure = case s of { Strict -> isPure strictnessFun t; NonStrict -> True; }
-  pure termIsPure
 
 -- | Is this a an utterly trivial term which might as well be inlined?
 trivialTerm :: Term tyname name uni fun a -> Bool
