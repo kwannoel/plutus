@@ -79,7 +79,8 @@ contextually, so there's no point doing this.
 
 -- 'SubstRng' in the paper, no 'Susp' case
 -- See Note [Inlining approach and 'Secrets of the GHC Inliner']
-newtype InlineTerm tyname name uni fun a = Done (Term tyname name uni fun a)
+data InlineTerm tyname name uni fun a = Done (Term tyname name uni fun a)
+                                      | Susp (Term tyname name uni fun a)
 
 newtype TermEnv tyname name uni fun a = TermEnv { _unTermEnv :: UniqueMap TermUnique (InlineTerm tyname name uni fun a) }
     deriving newtype (Semigroup, Monoid)
@@ -221,6 +222,8 @@ processTerm = handleTerm <=< traverseOf termSubtypes applyTypeSubstitution where
         -- Already processed term, just rename and put it in, don't do any
         -- further optimization here.
         Done t -> PLC.rename t
+        -- We still need to process the suspended term
+        Susp t -> PLC.rename t >>= processTerm
 
 
 {- Note [Inlining various kinds of binding]
@@ -272,7 +275,7 @@ maybeAddSubst s n rhs = do
     if preUnconditional then do
         -- Pre Inline preInlineUnconditional
         -- TODO:  This is probably not Done
-        extendAndDrop (Done rhs)
+        extendAndDrop (Susp rhs)
     else do
         -- Only do PostInlineUnconditional
         -- See Note [Inlining approach and 'Secrets of the GHC Inliner']
