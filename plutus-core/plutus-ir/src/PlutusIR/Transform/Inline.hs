@@ -292,6 +292,7 @@ preInlineUnconditional n t = do
     let usedOnce = Usages.isUsedOnce n usgs
     let termIsLambda = case t of
             LamAbs{} -> True
+            TyAbs{}  -> True
             _        -> False
     pure $ usedOnce && termIsLambda
 
