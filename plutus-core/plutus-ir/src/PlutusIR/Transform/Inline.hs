@@ -261,6 +261,9 @@ processSingleBinding = \case
     -- Not a strict binding, just process all the subterms
     b -> Just <$> forMOf bindingSubterms b processTerm
 
+-- NOTE:  Nothing means that we are inlining the term:
+--   * we have extended the substitution, and
+--   * we are removing the binding (hence we return Nothing)
 maybeAddSubst
     :: forall tyname name uni fun a m . Inlining tyname name uni fun a m
     => Strictness
@@ -268,20 +271,14 @@ maybeAddSubst
     -> Term tyname name uni fun a
     -> m (Maybe (Term tyname name uni fun a))
 maybeAddSubst s n rhs = do
-    -- NOTE:  Nothing means that we are inlining the term:
-    --   * we have extended the substitution, and
-    --   * we are removing the binding (hence we return Nothing)
     preUnconditional <- preInlineUnconditional n rhs
-    if preUnconditional then do
-        -- Pre Inline preInlineUnconditional
-        -- TODO:  This is probably not Done
+    if preUnconditional then
         extendAndDrop (Susp rhs)
     else do
-        -- Only do PostInlineUnconditional
         -- See Note [Inlining approach and 'Secrets of the GHC Inliner']
         rhs' <- processTerm rhs
         postUnconditional <- postInlineUnconditional s rhs'
-        if postUnconditional then do
+        if postUnconditional then
             extendAndDrop (Done rhs')
         -- NOTE:  keep the processed binding
         else pure $ Just rhs'
@@ -322,7 +319,7 @@ unconditionally.
 -- See Note [Inlining approach and 'Secrets of the GHC Inliner']
 postInlineUnconditional :: Inlining tyname name uni fun a m => Strictness -> Term tyname name uni fun a -> m Bool
 postInlineUnconditional s t = do
-    strctMap <- _strictnessMap <$> ask
+    strctMap <- asks _strictnessMap
     let -- See Note [Inlining criteria]
         termIsTrivial = trivialTerm t
         -- See Note [Inlining and purity]
