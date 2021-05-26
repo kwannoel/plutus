@@ -79,8 +79,8 @@ contextually, so there's no point doing this.
 
 -- 'SubstRng' in the paper, no 'Susp' case
 -- See Note [Inlining approach and 'Secrets of the GHC Inliner']
-data InlineTerm tyname name uni fun a = Done (Term tyname name uni fun a)
-                                      | Susp (Term tyname name uni fun a)
+newtype InlineTerm tyname name uni fun a = Done (Term tyname name uni fun a)
+                                      -- | Susp (Subst tyname name uni fun a) (Term tyname name uni fun a)
 
 newtype TermEnv tyname name uni fun a = TermEnv { _unTermEnv :: UniqueMap TermUnique (InlineTerm tyname name uni fun a) }
     deriving newtype (Semigroup, Monoid)
@@ -114,7 +114,6 @@ type Inlining tyname name uni fun a m =
 data InlineInfo = InlineInfo { _strictnessMap :: Deps.StrictnessMap
                              , _usages        :: Usages.Usages
                              }
-makeLenses ''InlineInfo
 
 lookupTerm
     :: (HasUnique name TermUnique)
@@ -222,9 +221,6 @@ processTerm = handleTerm <=< traverseOf termSubtypes applyTypeSubstitution where
         -- Already processed term, just rename and put it in, don't do any
         -- further optimization here.
         Done t -> PLC.rename t
-        -- We still need to process the suspended term
-        Susp t -> PLC.rename t >>= processTerm
-
 
 {- Note [Inlining various kinds of binding]
 We can inline term and type bindings, we can't do anything with datatype bindings.
@@ -271,12 +267,12 @@ maybeAddSubst
     -> Term tyname name uni fun a
     -> m (Maybe (Term tyname name uni fun a))
 maybeAddSubst s n rhs = do
-    preUnconditional <- preInlineUnconditional n rhs
-    if preUnconditional then
-        extendAndDrop (Susp rhs)
+    rhs' <- processTerm rhs
+    preUnconditional <- preInlineUnconditional n rhs'
+    if preUnconditional then do
+        extendAndDrop (Done rhs')
     else do
         -- See Note [Inlining approach and 'Secrets of the GHC Inliner']
-        rhs' <- processTerm rhs
         postUnconditional <- postInlineUnconditional s rhs'
         if postUnconditional then
             extendAndDrop (Done rhs')
@@ -284,7 +280,7 @@ maybeAddSubst s n rhs = do
         else pure $ Just rhs'
     where
         extendAndDrop :: forall b. InlineTerm tyname name uni fun a -> m (Maybe b)
-        extendAndDrop t = modify (extendTerm n t) >> pure Nothing
+        extendAndDrop t = modify' (extendTerm n t) >> pure Nothing
 
 preInlineUnconditional :: Inlining tyname name uni fun a m => name -> Term tyname name uni fun a -> m Bool
 preInlineUnconditional n t = do
