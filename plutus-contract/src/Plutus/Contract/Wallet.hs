@@ -23,6 +23,7 @@ import           Control.Monad.Freer.Extras.Log (LogMsg, logDebug, logInfo)
 import           Data.Bifunctor                 (second)
 import           Data.Foldable                  (fold, traverse_)
 import qualified Data.Map                       as Map
+import           Data.Maybe                     (isNothing)
 import           Data.Monoid                    (Sum (..))
 import qualified Data.Set                       as Set
 import           Data.String                    (IsString (fromString))
@@ -131,22 +132,24 @@ balanceTx ::
     -- ^ The unbalanced transaction
     -> Eff effs Tx
 balanceTx utxo pk UnbalancedTx{unBalancedTxTx} = do
-    inputValues <- traverse lookupValue (Set.toList $ Tx.txInputs unBalancedTxTx)
-    collateral  <- traverse lookupValue (Set.toList $ Tx.txCollateral unBalancedTxTx)
-    let fees = L.txFee unBalancedTxTx
-        left = L.txForge unBalancedTxTx <> fold inputValues
-        right = fees <> foldMap (view Tx.outValue) (unBalancedTxTx ^. Tx.outputs)
+    let filteredUnbalancedTxTx = removeEmptyOutputs unBalancedTxTx
+    let txInputs = Set.toList $ Tx.txInputs filteredUnbalancedTxTx
+    inputValues <- traverse lookupValue txInputs
+    collateral  <- traverse lookupValue (Set.toList $ Tx.txCollateral filteredUnbalancedTxTx)
+    let fees = L.txFee filteredUnbalancedTxTx
+        left = L.txForge filteredUnbalancedTxTx <> fold inputValues
+        right = fees <> foldMap (view Tx.outValue) (filteredUnbalancedTxTx ^. Tx.outputs)
         remainingFees = fees P.- fold collateral -- TODO: add collateralPercent
         balance = left P.- right
         (neg, pos) = Value.split balance
 
     tx' <- if Value.isZero pos
            then do
-               logDebug NoOutputsAdded
-               pure unBalancedTxTx
+                logDebug NoOutputsAdded
+                pure filteredUnbalancedTxTx
            else do
                 logDebug $ AddingPublicKeyOutputFor pos
-                pure $ addOutputs pk pos unBalancedTxTx
+                pure $ addOutputs pk pos filteredUnbalancedTxTx
 
     tx'' <- if Value.isZero neg
             then do
@@ -192,6 +195,11 @@ addInputs mp pk vl tx = do
 addOutputs :: PubKey -> Value -> Tx -> Tx
 addOutputs pk vl tx = tx & over Tx.outputs (pko :) where
     pko = Tx.pubKeyTxOut vl pk
+
+removeEmptyOutputs :: Tx -> Tx
+removeEmptyOutputs tx = tx & over Tx.outputs (filter (not . isEmpty)) where
+    isEmpty (Tx.TxOut{Tx.txOutValue, Tx.txOutDatumHash}) =
+        null (Value.flattenValue txOutValue) && isNothing txOutDatumHash
 
 addCollateral
     :: Member (Error WalletAPIError) effs
